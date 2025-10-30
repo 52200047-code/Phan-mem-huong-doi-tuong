@@ -1,33 +1,36 @@
 package spmf_integration;
 
-import ca.pfv.spmf.algorithms.AbstractAlgorithm;
 import db.UncertainDatabase;
-import miner.*;
+import miner.WPFI_Apriori;
 import entity.Itemset;
 
 import java.io.*;
 import java.util.*;
 
-/** 
- * Thuật toán WPFI tích hợp vào framework SPMF 
+/**
+ * Tích hợp thuật toán Weighted Probabilistic Frequent Itemset (WPFI)
+ * vào framework SPMF.
  */
-public class AlgoWPFI extends AbstractAlgorithm {
+public class AlgoWPFI {
 
-    @Override
     public void runAlgorithm(String input, String output, double minsup) throws IOException {
-        UncertainDatabase db = SPMFReader.load(input, 0.8, 1.0);
-        ProbabilisticModel model = new PoissonModel();
+        // 1️⃣ Đọc cơ sở dữ liệu không chắc chắn từ file
+        UncertainDatabase db = SPMFReader.load(input, 0.8, 1.0); // defaultProb=0.8, weight=1.0
 
-        WPFI_Apriori algo = new WPFI_Apriori(db, model);
+        // 2️⃣ Chạy thuật toán
+        WPFI_Apriori algo = new WPFI_Apriori(db);
         Set<Itemset> results = algo.mine();
 
+        // 3️⃣ Xuất kết quả
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(output))) {
-            for (Itemset X : results) writer.write(X.toString() + "\n");
+            for (Itemset X : results) {
+                writer.write(X.toString());
+                writer.newLine();
+            }
         }
     }
 
-    @Override
     public void printStatistics() {
-        System.out.println("AlgoWPFI run successfully");
+        System.out.println("✅ AlgoWPFI run successfully!");
     }
 }
