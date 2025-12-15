@@ -1,61 +1,55 @@
 import db.UncertainDatabase;
-import entity.*;
 import miner.WPFI_Apriori;
-import util.WPFI_Metrics;
 import util.Constants;
 
-import java.util.*;
-
-/**
- * Demo chạy thuật toán WPFI-Apriori trên dữ liệu mẫu nhỏ.
- */
 public class MainApp {
+
     public static void main(String[] args) {
-        // === 1️⃣ Tạo các Item có trọng số (weight) riêng ===
-        Item milk  = new Item("Milk", 0.7, 0.4);    // tên, xác suất, trọng số
-        Item fruit = new Item("Fruit", 0.9, 0.9);
-        Item video = new Item("Video", 0.5, 0.6);
-        Item bread = new Item("Bread", 0.8, 0.5);
 
-        // === 2️⃣ Tạo các Transaction không chắc chắn ===
-        Transaction t1 = new Transaction();
-        t1.addItem(milk,  0.6);
-        t1.addItem(fruit, 1.0);
-        t1.addItem(video, 0.3);
+        try {
+            /* =======================
+               1️⃣ CẤU HÌNH
+             ======================= */
 
-        Transaction t2 = new Transaction();
-        t2.addItem(milk,  1.0);
-        t2.addItem(fruit, 0.8);
-        t2.addItem(bread, 0.7);
+            String dataPath   = "src/data/fruithut_original.txt";
+            String outputPath = "src/out/sources.txt";
 
-        Transaction t3 = new Transaction();
-        t3.addItem(fruit, 0.9);
-        t3.addItem(video, 0.4);
-        t3.addItem(bread, 0.6);
+            // Thiết lập tham số (có thể chỉnh)
+            Constants.MSUP  = 5;     // minsup
+            Constants.T     = 0.01;  // ngưỡng xác suất * trọng số
+            Constants.ALPHA = 0.5;   // pruning
+            Constants.MIN_AVG_WEIGHT = 0.0;
 
-        // === 3️⃣ Gom lại thành cơ sở dữ liệu không chắc chắn ===
-        UncertainDatabase db = new UncertainDatabase();
-        db.addTransaction(t1);
-        db.addTransaction(t2);
-        db.addTransaction(t3);
+            /* =======================
+               2️⃣ LOAD DATABASE
+             ======================= */
 
-        // === 4️⃣ Chạy thuật toán chính ===
-        WPFI_Apriori miner = new WPFI_Apriori(db);
-        Set<Itemset> results = miner.mine();
+            UncertainDatabase db = new UncertainDatabase();
+            db.loadDatabase(dataPath);
 
-        // === 5️⃣ In kết quả chi tiết ===
-        System.out.println("========== KẾT QUẢ KHAI THÁC WPFI ==========");
-        for (Itemset X : results) {
-            double mu = WPFI_Metrics.computeMu(X, db.getTransactions());
-            double pTail = WPFI_Metrics.poissonTailAtLeast(Constants.MSUP, mu);
-            double score = X.avgWeight() * pTail;
+            System.out.println("\n========== DATABASE LOADED ==========");
+            System.out.println("Dataset : " + dataPath);
+            System.out.println("Transactions : " + db.size());
+            System.out.println("====================================\n");
 
-            System.out.printf(Locale.US,
-                    "Tập: %-30s | μ(X)=%.4f | pTail=%.4f | avgW=%.3f | score=%.4f%n",
-                    X.toString(), mu, pTail, X.avgWeight(), score);
+            /* =======================
+               3️⃣ CHẠY THUẬT TOÁN
+             ======================= */
+
+            WPFI_Apriori miner = new WPFI_Apriori(db);
+
+            System.out.println("🚀 Bắt đầu khai thác WPFI...");
+            System.out.println("📄 Output (resume): " + outputPath);
+            System.out.println("👉 Có thể Ctrl+C, chạy lại sẽ tiếp tục\n");
+
+            miner.mine(outputPath);
+
+            System.out.println("\n✅ KHAI THÁC HOÀN TẤT");
+            System.out.println("📂 Kết quả nằm trong: " + outputPath);
+
+        } catch (Exception e) {
+            System.err.println("❌ LỖI KHI CHẠY CHƯƠNG TRÌNH:");
+            e.printStackTrace();
         }
-
-        System.out.println("==============================================");
-        System.out.println("Số tập phổ biến xác suất có trọng số: " + results.size());
     }
 }

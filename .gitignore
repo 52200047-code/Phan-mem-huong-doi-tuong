@@ -1,0 +1,11 @@
+# Java build
+out/
+*.class
+
+# Result files
+source.txt
+output_*.txt
+
+# OS
+.DS_Store
+
