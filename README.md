@@ -16,4 +16,17 @@ Dataset Explanation (Giải thích tập dữ liệu)
   - Trọng số (`w(i)`) – mức độ quan trọng hoặc độ tin cậy của mục, mặc định là 1.0.
 
 Chạy dự án :
-  Biên dịch file MainApp.java : java main.MainApp
+  Biên dịch file MainApp.java : 
+    mkdir bin, src\out -Force | Out-Null
+    $files = Get-ChildItem -Recurse -Filter *.java -Path src | ForEach-Object { $_.FullName }
+    javac -encoding UTF-8 -d bin $files
+  Chạy:
+  java -Xmx4g -cp bin MainApp 1 src\data\chess.txt src\out\chess\chess_weight.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 2 src\data\chess.txt src\out\chess\chess_muhat.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 3 src\data\chess.txt src\out\chess\chess_approx.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 4 src\data\chess.txt src\out\chess\chess_all.txt 1100 0.8 3 8.5
+
+  java -Xmx4g -cp bin MainApp 1 src\data\mushrooms.txt src\out\mushrooms\mushrooms_weight.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 2 src\data\mushrooms.txt src\out\mushrooms\mushrooms_muhat.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 3 src\data\mushrooms.txt src\out\mushrooms\mushrooms_approx.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 4 src\data\mushrooms.txt src\out\mushrooms\mushrooms_all.txt 1100 0.8 3 8.5

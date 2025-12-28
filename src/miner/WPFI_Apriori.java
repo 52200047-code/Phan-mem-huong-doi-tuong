@@ -13,13 +13,16 @@ import java.util.stream.Collectors;
 
 /**
  * Thuật toán Weighted Probabilistic Frequent Itemset (WPFI) – mở rộng Apriori.
- *
- * Có hỗ trợ:
- *  - Ghi kết quả từng itemset ra file
- *  - Resume khi chạy lại (không ghi trùng)
- *  - Ctrl+C an toàn
+ * Giới hạn độ dài itemset tối đa bằng Constants.MAX_K 
  */
 public class WPFI_Apriori {
+
+    public enum PruningMode {
+        WEIGHT_ONLY,
+        MUHAT_ONLY,
+        APPROX_ONLY,
+        ALL
+    }
 
     /* ================== RESUME SUPPORT ================== */
     private final Set<String> existedResults = new HashSet<>();
@@ -28,9 +31,15 @@ public class WPFI_Apriori {
 
     /* ================== CORE DATA ================== */
     private final UncertainDatabase db;
+    private final PruningMode pruningMode;
 
     public WPFI_Apriori(UncertainDatabase db) {
+        this(db, PruningMode.ALL);
+    }
+
+    public WPFI_Apriori(UncertainDatabase db, PruningMode mode) {
         this.db = Objects.requireNonNull(db);
+        this.pruningMode = (mode == null) ? PruningMode.ALL : mode;
     }
 
     /* ================== PUBLIC API ================== */
@@ -42,29 +51,31 @@ public class WPFI_Apriori {
 
         Set<Itemset> all = new LinkedHashSet<>();
 
-        /* ---------- 1️⃣ Thu thập vũ trụ item ---------- */
+        /* ---------- 1️ Thu thập vũ trụ item ---------- */
         SortedSet<Item> universe = collectUniverse(db);
 
-        /* ---------- 2️⃣ Tính μ cho 1-itemset ---------- */
+        /* ---------- 2️ Tính μ cho 1-itemset (1 pass qua DB) ---------- */
         Map<Item, Double> mu1 = new HashMap<>();
-        for (Item i : universe) {
-            mu1.put(i, WPFI_Metrics.computeMu(new Itemset(Set.of(i)), db.getTransactions()));
+        for (Transaction t : db.getTransactions()) {
+            for (Item i : t.getItems()) {
+                mu1.merge(i, t.getProb(i), Double::sum);
+            }
         }
 
-        /* ---------- 3️⃣ Tính μ̂ ---------- */
+        /* ---------- 3️ Tính μ̂ ---------- */
         double maxW = universe.stream().mapToDouble(Item::getWeight).max().orElse(1.0);
         if (maxW <= 0) maxW = 1.0;
 
         final double muHat = WPFI_Metrics.solveMuHatPoisson(Constants.MSUP, Constants.T / maxW);
         final int n = db.size();
 
-        /* ---------- 4️⃣ L1 ---------- */
+        /* ---------- 4️ L1 ---------- */
         Set<Itemset> Lprev = new LinkedHashSet<>();
         Map<Itemset, Double> muMap = new HashMap<>();
 
         for (Item i : universe) {
             Itemset X = new Itemset(Set.of(i));
-            double mu = mu1.get(i);
+            double mu = mu1.getOrDefault(i, 0.0);
             muMap.put(X, mu);
 
             double pTail = WPFI_Metrics.poissonTailAtLeast(Constants.MSUP, mu);
@@ -87,13 +98,21 @@ public class WPFI_Apriori {
                 .flatMap(s -> s.getItems().stream())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        /* ---------- 5️⃣ Apriori Loop ---------- */
+        /* ---------- 5️ Apriori Loop ---------- */
         int k = 2;
         while (!Lprev.isEmpty()) {
+
+            // GIỚI HẠN K 
+            int MAX_K = 5; 
+            if (MAX_K > 0 && k > MAX_K) {
+                System.out.println("[INFO] Stop: reached MAX_K = " + MAX_K);
+                break;
+            }
+
             System.out.println("[INFO] Mining level k = " + k + ", |Lprev| = " + Lprev.size());
 
             Set<Itemset> Ck = generateCandidatesWithPruning(
-                    Lprev, universe, I0, muMap, mu1, muHat, n
+                    Lprev, universe, I0, muMap, mu1, muHat, n, pruningMode
             );
             if (Ck.isEmpty()) break;
 
@@ -154,7 +173,7 @@ public class WPFI_Apriori {
             if (!existedResults.contains(key)) {
                 resultWriter.write(key);
                 resultWriter.newLine();
-                resultWriter.flush(); // cực kỳ quan trọng
+                resultWriter.flush();
                 existedResults.add(key);
             }
         } catch (IOException e) {
@@ -187,9 +206,14 @@ public class WPFI_Apriori {
             Map<Itemset, Double> muMap,
             Map<Item, Double> mu1,
             double muHat,
-            int n
+            int n,
+            PruningMode mode
     ) {
         Set<Itemset> Ck = new LinkedHashSet<>();
+
+        final boolean useWeight = (mode == PruningMode.WEIGHT_ONLY || mode == PruningMode.ALL);
+        final boolean useMuHat  = (mode == PruningMode.MUHAT_ONLY  || mode == PruningMode.ALL);
+        final boolean useApprox = (mode == PruningMode.APPROX_ONLY || mode == PruningMode.ALL);
 
         for (Itemset X : Lprev) {
             double muX = muMap.getOrDefault(X, 0.0);
@@ -198,11 +222,20 @@ public class WPFI_Apriori {
             /* (A) item trong I0 */
             for (Item I : I0) {
                 if (X.getItems().contains(I)) continue;
-                if (avgWeightAfterUnion(X, I) < Constants.MIN_AVG_WEIGHT) continue;
 
-                double muI = mu1.get(I);
-                if (Math.min(muX, muI) < muHat) continue;
-                if (Constants.ALPHA > 0 && (muX * muI) < (Constants.ALPHA * n * muHat)) continue;
+                if (useWeight) {
+                    if (avgWeightAfterUnion(X, I) < Constants.MIN_AVG_WEIGHT) continue;
+                }
+
+                double muI = mu1.getOrDefault(I, 0.0);
+
+                if (useMuHat) {
+                    if (Math.min(muX, muI) < muHat) continue;
+                }
+
+                if (useApprox) {
+                    if (Constants.ALPHA > 0 && (muX * muI) < (Constants.ALPHA * n * muHat)) continue;
+                }
 
                 Ck.add(X.unionWith(I));
             }
@@ -211,13 +244,21 @@ public class WPFI_Apriori {
             for (Item I : universe) {
                 if (X.getItems().contains(I)) continue;
                 if (I0.contains(I)) continue;
-                if (I.getWeight() >= minW) continue;
 
-                if (avgWeightAfterUnion(X, I) < Constants.MIN_AVG_WEIGHT) continue;
+                if (useWeight) {
+                    if (I.getWeight() >= minW) continue;
+                    if (avgWeightAfterUnion(X, I) < Constants.MIN_AVG_WEIGHT) continue;
+                }
 
-                double muI = mu1.get(I);
-                if (Math.min(muX, muI) < muHat) continue;
-                if (Constants.ALPHA > 0 && (muX * muI) < (Constants.ALPHA * n * muHat)) continue;
+                double muI = mu1.getOrDefault(I, 0.0);
+
+                if (useMuHat) {
+                    if (Math.min(muX, muI) < muHat) continue;
+                }
+
+                if (useApprox) {
+                    if (Constants.ALPHA > 0 && (muX * muI) < (Constants.ALPHA * n * muHat)) continue;
+                }
 
                 Ck.add(X.unionWith(I));
             }
