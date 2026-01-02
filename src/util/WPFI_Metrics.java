@@ -8,7 +8,7 @@ import java.util.List;
 
 public class WPFI_Metrics {
 
-    /* ---------- μ, σ² ---------- */
+    /* μ, σ² */
 
     /** μ_X = sum_t Pr(X⊆t) */
     public static double computeMu(Itemset X, List<Transaction> db) {
@@ -38,7 +38,7 @@ public class WPFI_Metrics {
         return p;
     }
 
-    /* ---------- Poisson ---------- */
+    /* Poisson */
 
     /** CDF Poisson F(k; μ) = P(X <= k) */
     public static double poissonCDF(int k, double mu) {
@@ -71,7 +71,7 @@ public class WPFI_Metrics {
         return 0.5 * (lo + hi);
     }
 
-    /* ---------- DP exact cho tail Poisson-Binomial ---------- */
+    /* DP exact cho tail Poisson-Binomial */
 
     /** DP chính xác Pr(Sup(X) >= msup) từ mảng p[t] = Pr(X⊆T_t). O(n*msup) */
     public static double dpTailAtLeast(int msup, double[] probs) {
@@ -87,7 +87,7 @@ public class WPFI_Metrics {
                 dp[s] = stay + go;
             }
         }
-        return dp[msup]; // đã dồn tail >= msup vào ô msup
+        return dp[msup];
     }
 
     public static double[] probsPerTransaction(Itemset X, List<Transaction> db) {

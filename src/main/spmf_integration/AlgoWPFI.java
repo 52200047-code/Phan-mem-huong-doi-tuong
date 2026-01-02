@@ -6,10 +6,6 @@ import util.Constants;
 
 import java.io.IOException;
 
-/**
- * Tích hợp thuật toán Weighted Probabilistic Frequent Itemset (WPFI)
- * vào framework SPMF.
- */
 public class AlgoWPFI {
 
     /**
@@ -19,17 +15,17 @@ public class AlgoWPFI {
      */
     public void runAlgorithm(String input, String output, double minsup) throws IOException {
 
-        /* 1️⃣ Ánh xạ minsup SPMF → hệ thống WPFI */
+        /* 1️ Ánh xạ minsup SPMF → hệ thống WPFI */
         Constants.MSUP = (int) Math.ceil(minsup);
 
         System.out.println("[SPMF] MSUP = " + Constants.MSUP);
         System.out.println("[SPMF] Input  = " + input);
         System.out.println("[SPMF] Output = " + output);
 
-        /* 2️⃣ Load database */
+        /* 2️ Load database */
         UncertainDatabase db = SPMFReader.load(input, 0.8, 1.0);
 
-        /* 3️⃣ Chạy thuật toán (auto write + resume) */
+        /* 3️ Chạy thuật toán (auto write + resume) */
         WPFI_Apriori algo = new WPFI_Apriori(db);
         algo.mine(output);
 
@@ -37,6 +33,6 @@ public class AlgoWPFI {
     }
 
     public void printStatistics() {
-        System.out.println("✅ AlgoWPFI run successfully!");
+        System.out.println("AlgoWPFI run successfully!");
     }
 }

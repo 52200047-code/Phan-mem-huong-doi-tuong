@@ -16,7 +16,7 @@ public class UncertainDatabase {
 
     private final List<Transaction> transactions = new ArrayList<>();
 
-    // Cấu hình gán p/w (bạn có thể chỉnh)
+    // Cấu hình gán p/w
     private static final long SEED = 42L;
     private static final double NOISE = 0.08; // biên độ nhiễu cho p (0.0 -> 0.15)
 
@@ -43,23 +43,13 @@ public class UncertainDatabase {
         return transactions.size();
     }
 
-    /**
-     * Load file có dạng:
-     *   1 3 10 20
-     *   2 5 8
-     *
-     * hoặc dạng uncertain (SPMF style):
-     *   1(0.7) 3(0.2) 10(0.9)
-     *
-     * - Bỏ qua header: dòng bắt đầu bằng "@", "Member", "Date"
-     */
     public void loadDatabase(String dataPath) throws IOException {
         transactions.clear();
 
         File f = new File(dataPath);
         if (!f.exists()) throw new FileNotFoundException("Không tìm thấy file: " + dataPath);
 
-        // ===== PASS 1: Đếm freq(item) theo số transaction chứa item =====
+        // PASS 1: Đếm freq(item) theo số transaction chứa item
         Map<String, Integer> freq = new HashMap<>();
         int nTransactions = 0;
 
@@ -96,7 +86,7 @@ public class UncertainDatabase {
         // maxFreq để chuẩn hoá
         int maxFreq = freq.values().stream().mapToInt(Integer::intValue).max().orElse(1);
 
-        // ===== Tính weight map: w(i) = W_MIN + (W_MAX-W_MIN)*log(1+freq)/log(1+maxFreq) =====
+        // Tính weight map: w(i) = W_MIN + (W_MAX-W_MIN)*log(1+freq)/log(1+maxFreq)
         Map<String, Double> weightMap = new HashMap<>();
         double denom = Math.log(1.0 + maxFreq);
         if (denom <= 0) denom = 1.0;
@@ -107,7 +97,7 @@ public class UncertainDatabase {
             weightMap.put(e.getKey(), w);
         }
 
-        // ===== PASS 2: Tạo transactions + gán p,w =====
+        // PASS 2: Tạo transactions + gán p,w
         Random rng = new Random(SEED);
 
         try (BufferedReader br = new BufferedReader(new FileReader(f))) {
@@ -155,8 +145,6 @@ public class UncertainDatabase {
         }
     }
 
-    // ===================== helpers =====================
-
     private static boolean isDataLine(String line) {
         if (line == null) return false;
         if (line.isEmpty()) return false;
@@ -183,11 +171,6 @@ public class UncertainDatabase {
         }
     }
 
-    /**
-     * Parse token:
-     *  - "23" => itemId=23, hasProb=false
-     *  - "23(0.65)" => itemId=23, hasProb=true, prob=0.65
-     */
     private static ParsedToken parseToken(String token) {
         int l = token.indexOf('(');
         int r = token.indexOf(')');

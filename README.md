@@ -17,16 +17,20 @@ Dataset Explanation (Giải thích tập dữ liệu)
 
 Chạy dự án :
   Biên dịch file MainApp.java : 
-    mkdir bin, src\out -Force | Out-Null
+    Remove-Item -Recurse -Force bin -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force bin | Out-Null
+
     $files = Get-ChildItem -Recurse -Filter *.java -Path src | ForEach-Object { $_.FullName }
     javac -encoding UTF-8 -d bin $files
-  Chạy:
-  java -Xmx4g -cp bin MainApp 1 src\data\chess.txt src\out\chess\chess_weight.txt 1100 0.8 3 8.5
-  java -Xmx4g -cp bin MainApp 2 src\data\chess.txt src\out\chess\chess_muhat.txt 1100 0.8 3 8.5
-  java -Xmx4g -cp bin MainApp 3 src\data\chess.txt src\out\chess\chess_approx.txt 1100 0.8 3 8.5
-  java -Xmx4g -cp bin MainApp 4 src\data\chess.txt src\out\chess\chess_all.txt 1100 0.8 3 8.5
 
-  java -Xmx4g -cp bin MainApp 1 src\data\mushrooms.txt src\out\mushrooms\mushrooms_weight.txt 1100 0.8 3 8.5
-  java -Xmx4g -cp bin MainApp 2 src\data\mushrooms.txt src\out\mushrooms\mushrooms_muhat.txt 1100 0.8 3 8.5
-  java -Xmx4g -cp bin MainApp 3 src\data\mushrooms.txt src\out\mushrooms\mushrooms_approx.txt 1100 0.8 3 8.5
-  java -Xmx4g -cp bin MainApp 4 src\data\mushrooms.txt src\out\mushrooms\mushrooms_all.txt 1100 0.8 3 8.5
+  
+  Chạy:
+  java -Xmx4g -cp bin MainApp 0 src\data\chess.txt src\out\chess_none.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 1 src\data\chess.txt src\out\chess_weight.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 2 src\data\chess.txt src\out\chess_muhat.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 3 src\data\chess.txt src\out\chess_approx.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 4 src\data\chess.txt src\out\chess_all.txt 1100 0.8 3 8.5
+  java -Xmx4g -cp bin MainApp 5 src\data\chess.txt src\out\chess_fast.txt 1100 0.8 3 8.5
+
+  So sánh các mode: 
+  java -Xmx4g -cp bin MainApp exp src\data\chess.txt src\out\exp_chess 1100 0.8 3 8.5
