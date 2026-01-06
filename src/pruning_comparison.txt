@@ -1,0 +1,11 @@
+===== PRUNING COMPARISON =====
+dataset=D:\Phan-mem-huong-doi-tuong-main\src\data\mushrooms.txt
+input=D:\Phan-mem-huong-doi-tuong-main\src\input.txt
+config=MSUP=2 T=0.1 ALPHA=0.6 MIN_AVG_WEIGHT=0.02 KMAX=3 PRUNE_MODE=ALL BENCH_PRUNE=true
+------------------------------------------------------------
+MODE	RuntimeMs	PeakMemMB	Expansions	CandidatesKept	Patterns	PatternsByK	OutputFile
+WEIGHT_ONLY	237	18	18770	18766	4232	{1=36, 2=457, 3=3739}	output_weight_only.txt
+MUHAT_ONLY	124	40	18770	18770	4232	{1=36, 2=457, 3=3739}	output_muhat_only.txt
+APPROXMU_ONLY	68	94	18656	14303	4224	{1=36, 2=454, 3=3734}	output_approxmu_only.txt
+UBSCORE_ONLY	83	60	18770	17361	4232	{1=36, 2=457, 3=3739}	output_ubscore_only.txt
+ALL	42	133	18656	14121	4224	{1=36, 2=454, 3=3734}	output_all.txt
