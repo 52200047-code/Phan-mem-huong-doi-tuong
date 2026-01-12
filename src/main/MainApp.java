@@ -1,173 +1,589 @@
 import db.UncertainDatabase;
+import entity.Itemset;
 import miner.WPFI_Apriori;
 import util.Constants;
+import util.WPFI_Metrics;
 
-import java.io.File;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.*;
+import miner.WPFI_Apriori;
+import miner.WPFI_Apriori.Stats;
 
+/**
+ * MainApp:
+ * 1) Đọc dataset gốc (SPMF/FIMI style: mỗi dòng là 1 transaction, items cách
+ * nhau bởi space/comma)
+ * 2) Sinh weight table w(i) (cố định theo item)
+ * 3) Sinh xác suất xuất hiện p(i|t) cho từng item trong từng transaction
+ * 4) Ghi ra input.txt (WEIGHTS + DATA)
+ * 5) Đọc lại input.txt -> chạy WPFI -> ghi output.txt
+ *
+ * args:
+ * args[0] datasetPath (default .\data\chess.txt)
+ * args[1] inputPath (default input.txt)
+ * args[2] outputPath (default output.txt)
+ * args[3] maxTx (default: read all)
+ * args[4] seed (default: 20260106)
+ * args[5] meanProb (default: 0.5)
+ * args[6] varProb (default: 0.125)
+ * args[7] useExactTail (default: false) // true = DP exact, false = Poisson
+ * approx
+ *
+ * Run (PowerShell):
+ * java -Dfile.encoding=UTF-8 -cp ".\main;." MainApp ".\data\chess.txt"
+ * "input.txt" "output.txt" 10000 20260106 0.5 0.125 false
+ */
 public class MainApp {
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
+        String datasetPath = getArg(args, 0, ".\\data\\chess.txt");
+        String inputPath = getArg(args, 1, "input.txt");
+        String outputPath = getArg(args, 2, "output.txt");
+
+        int maxTx = tryParseInt(getArg(args, 3, null), Integer.MAX_VALUE);
+        long seed = tryParseLong(getArg(args, 4, null), 20260106L);
+
+        double meanProb = tryParseDouble(getArg(args, 5, null), 0.5);
+        double varProb = tryParseDouble(getArg(args, 6, null), 0.125);
+
+        boolean useExactTail = Boolean.parseBoolean(getArg(args, 7, "false"));
+        Constants.applyArgs(args);
+        // Nếu bật benchmark pruning: chạy nhiều mode và so sánh
+        if (Constants.BENCH_PRUNE) {
+            runPruningBenchmark(datasetPath, inputPath, outputPath, maxTx, seed, meanProb, varProb, useExactTail);
+            return;
+        }
 
         try {
-            /*
-             * Cú pháp chạy:
-             * 1) Chạy 1 mode theo kiểu cũ:
-             *    java -Xmx4g -cp bin MainApp [algo] [dataPath] [outputPath] [MSUP] [T] [ALPHA] [MIN_AVG_WEIGHT]
-             *    algo:
-             *      0 = NONE (baseline)
-             *      1 = WEIGHT_ONLY
-             *      2 = MUHAT_ONLY
-             *      3 = APPROX_ONLY
-             *      4 = ALL
-             *      5 = FAST
-             *
-             * 2) Chạy experiment (chạy tất cả mode để so sánh):
-             *    java -Xmx4g -cp bin MainApp exp [dataPath] [outputDir] [MSUP] [T] [ALPHA] [MIN_AVG_WEIGHT]
-             *
-             * Note: outputDir là thư mục, mỗi mode sẽ sinh 1 file riêng.
-             */
+            // A) Tạo input.txt (thể hiện rõ trọng số + xác suất)
+            generateInputFile(datasetPath, inputPath, maxTx, seed, meanProb, varProb);
 
-            boolean isExperiment = (args.length >= 1 && args[0].equalsIgnoreCase("exp"));
-
-            String dataPath;
-            String outputBase; // file (single mode) hoặc folder (experiment)
-            int argOffset;
-
-            if (isExperiment) {
-                // exp [dataPath] [outputDir] [MSUP] [T] [ALPHA] [MIN_AVG_WEIGHT]
-                dataPath = (args.length >= 2) ? args[1] : "src/data/fruithut_original.txt";
-                outputBase = (args.length >= 3) ? args[2] : "src/out/exp";
-                argOffset = 3;
-            } else {
-                // [algo] [dataPath] [outputPath] [MSUP] [T] [ALPHA] [MIN_AVG_WEIGHT]
-                dataPath = (args.length >= 2) ? args[1] : "src/data/fruithut_original.txt";
-                int algo = (args.length >= 1) ? Integer.parseInt(args[0]) : 4;
-                outputBase = (args.length >= 3) ? args[2] : ("src/out/result_algo" + algo + ".txt");
-                argOffset = 3;
-
-                // set mode theo algo
-                WPFI_Apriori.PruningMode mode = mapAlgoToMode(algo);
-
-                // set params
-                applyParams(args, argOffset);
-
-                // tạo folder output
-                ensureParentFolder(outputBase);
-
-                // load DB
-                UncertainDatabase db = new UncertainDatabase();
-                db.loadDatabase(dataPath);
-
-                System.out.println("\n========== DATABASE LOADED ==========");
-                System.out.println("Dataset : " + dataPath);
-                System.out.println("Transactions : " + db.size());
-                System.out.println("====================================\n");
-
-                // run single mode
-                System.out.println("Bat dau khai thac WPFI...");
-                System.out.println("Mode: " + mode);
-                System.out.println("Output: " + outputBase);
-                System.out.println("MSUP=" + Constants.MSUP + " | T=" + Constants.T + " | ALPHA=" + Constants.ALPHA + " | MIN_W=" + Constants.MIN_AVG_WEIGHT + " | MAX_K=" + Constants.MAX_K);
-
-                WPFI_Apriori miner = new WPFI_Apriori(db, mode);
-                miner.mine(outputBase);
-
-                // report
-                WPFI_Apriori.MiningReport r = miner.getLastReport();
-                System.out.println("\n[REPORT] " + mode);
-                System.out.println("runtime_ms=" + r.runtimeMs + ", peak_mem_mb=" + r.peakMemoryMB + ", total_candidates=" + r.totalCandidates + ", total_patterns=" + r.totalPatterns);
-                System.out.println("patterns_by_k=" + r.patternsByK);
-                System.out.println("\nFINISHED");
-                return;
-            }
-
-            // ========== EXPERIMENT MODE ==========
-            // set params cho experiment
-            applyParams(args, argOffset);
-
-            // đảm bảo output dir tồn tại
-            ensureDir(outputBase);
-
-            // load DB
+            // B) Đọc lại input.txt -> build UncertainDatabase (dùng loader chuẩn)
             UncertainDatabase db = new UncertainDatabase();
-            db.loadDatabase(dataPath);
+            db.loadFromInputFile(inputPath);
 
-            System.out.println("\n========== DATABASE LOADED ==========");
-            System.out.println("Dataset : " + dataPath);
-            System.out.println("Transactions : " + db.size());
-            System.out.println("OutputDir : " + outputBase);
-            System.out.println("MSUP=" + Constants.MSUP + " | T=" + Constants.T + " | ALPHA=" + Constants.ALPHA + " | MIN_W=" + Constants.MIN_AVG_WEIGHT + " | MAX_K=" + Constants.MAX_K);
-            System.out.println("====================================\n");
+            // C) Mine WPFI
+            WPFI_Apriori miner = new WPFI_Apriori(db);
+            Set<Itemset> results = miner.mine();
 
-            WPFI_Apriori.PruningMode[] modes = new WPFI_Apriori.PruningMode[]{
-                    WPFI_Apriori.PruningMode.NONE,
-                    WPFI_Apriori.PruningMode.WEIGHT_ONLY,
-                    WPFI_Apriori.PruningMode.MUHAT_ONLY,
-                    WPFI_Apriori.PruningMode.APPROX_ONLY,
-                    WPFI_Apriori.PruningMode.ALL,
-                    WPFI_Apriori.PruningMode.FAST
-            };
+            // D) Ghi output.txt
+            writeOutputFile(outputPath, datasetPath, inputPath, db, results, useExactTail);
 
-            System.out.println("mode,runtime_ms,peak_mem_mb,total_candidates,total_patterns,patterns_by_k,output_file");
-
-            for (WPFI_Apriori.PruningMode m : modes) {
-                String outFile = outputBase + File.separator + ("result_" + m.name() + ".txt");
-                ensureParentFolder(outFile);
-
-                System.out.println("[RUN] " + m + " -> " + outFile);
-
-                WPFI_Apriori miner = new WPFI_Apriori(db, m);
-                miner.mine(outFile);
-
-                WPFI_Apriori.MiningReport r = miner.getLastReport();
-                System.out.println(
-                        m.name() + "," +
-                                r.runtimeMs + "," +
-                                r.peakMemoryMB + "," +
-                                r.totalCandidates + "," +
-                                r.totalPatterns + "," +
-                                r.patternsByK.toString().replace(" ", "") + "," +
-                                outFile.replace(",", "_")
-                );
-            }
-
-            System.out.println("\nFINISHED EXPERIMENT");
+            // E) In nhanh ra console
+            System.out.println("OK!");
+            System.out.println("  dataset = " + resolvePathSmart(datasetPath).toAbsolutePath().normalize());
+            System.out.println("  input   = " + resolvePathSmart(inputPath).toAbsolutePath().normalize());
+            System.out.println("  output  = " + resolvePathSmart(outputPath).toAbsolutePath().normalize());
+            System.out.println("  MSUP=" + Constants.MSUP + "  T=" + Constants.T + "  useExactTail=" + useExactTail);
+            System.out.println("  #transactions = " + db.getTransactions().size());
+            System.out.println("  #WPFI = " + results.size());
 
         } catch (Exception e) {
-            System.err.println("ERROR");
+            System.err.println("Lỗi khi đọc/ghi/chạy miner: " + e.getMessage());
             e.printStackTrace();
+        }
+
+    }
+
+    /**
+     * input.txt format:
+     * #META ...
+     * #WEIGHTS
+     * item<TAB>weight
+     * ...
+     * #DATA
+     * item:prob item:prob ...
+     */
+    private static void generateInputFile(
+            String datasetPathStr,
+            String inputPathStr,
+            int maxTx,
+            long seed,
+            double meanProb,
+            double varProb) throws IOException {
+
+        Path datasetPath = resolvePathSmart(datasetPathStr);
+        if (!Files.exists(datasetPath)) {
+            throw new IOException("Không tìm thấy dataset: " + datasetPath.toAbsolutePath().normalize());
+        }
+
+        Random rnd = new Random(seed);
+
+        // Pass 1: collect unique items (up to maxTx lines)
+        LinkedHashSet<String> uniqueItems = collectUniqueItems(datasetPath, maxTx);
+
+        // Assign weights w(i) ~ Uniform(0,1], fixed per item
+        Map<String, Double> weightMap = new LinkedHashMap<String, Double>();
+        for (String it : uniqueItems) {
+            double w = 0.0001 + rnd.nextDouble() * 0.9999; // (0,1]
+            weightMap.put(it, w);
+        }
+
+        Path inputPath = resolvePathSmart(inputPathStr);
+
+        // Pass 2: write file
+        BufferedWriter bw = null;
+        try {
+            bw = Files.newBufferedWriter(inputPath, StandardCharsets.UTF_8);
+
+            bw.write("#META dataset=" + datasetPath.toAbsolutePath().normalize());
+            bw.newLine();
+            bw.write("#META seed=" + seed + " meanProb=" + meanProb + " varProb=" + varProb
+                    + " maxTx=" + (maxTx == Integer.MAX_VALUE ? "ALL" : maxTx));
+            bw.newLine();
+
+            // WEIGHTS
+            bw.write("#WEIGHTS");
+            bw.newLine();
+            for (Map.Entry<String, Double> e : weightMap.entrySet()) {
+                bw.write(e.getKey());
+                bw.write("\t");
+                bw.write(String.format(Locale.US, "%.6f", e.getValue()));
+                bw.newLine();
+            }
+
+            // DATA
+            bw.write("#DATA");
+            bw.newLine();
+
+            int count = 0;
+            BufferedReader br = null;
+            try {
+                br = Files.newBufferedReader(datasetPath, StandardCharsets.UTF_8);
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (count >= maxTx)
+                        break;
+                    line = line.trim();
+                    if (line.isEmpty())
+                        continue;
+
+                    String[] tokens = line.split("[,\\s]+");
+                    List<String> outTokens = new ArrayList<String>();
+
+                    for (String tok : tokens) {
+                        if (tok == null)
+                            continue;
+                        tok = tok.trim();
+                        if (tok.isEmpty())
+                            continue;
+
+                        // ignore SPMF terminators if any
+                        if (tok.equals("-1") || tok.equals("-2"))
+                            continue;
+
+                        String itemName = tok;
+                        Double pOccur = null;
+
+                        // Nếu dataset đã là uncertain "item:prob" thì giữ prob đó
+                        int colon = tok.lastIndexOf(':');
+                        if (colon > 0 && colon < tok.length() - 1) {
+                            itemName = tok.substring(0, colon).trim();
+                            pOccur = tryParseDoubleObj(tok.substring(colon + 1).trim(), null);
+                        }
+
+                        if (itemName.isEmpty())
+                            continue;
+
+                        double p = (pOccur != null) ? clip01(pOccur.doubleValue())
+                                : sampleGaussianClipped(rnd, meanProb, varProb);
+
+                        outTokens.add(itemName + ":" + String.format(Locale.US, "%.6f", p));
+                    }
+
+                    if (!outTokens.isEmpty()) {
+                        bw.write(joinBySpace(outTokens));
+                        bw.newLine();
+                        count++;
+                    }
+                }
+            } finally {
+                if (br != null)
+                    br.close();
+            }
+
+        } finally {
+            if (bw != null)
+                bw.close();
         }
     }
 
-    private static WPFI_Apriori.PruningMode mapAlgoToMode(int algo) {
-        return switch (algo) {
-            case 0 -> WPFI_Apriori.PruningMode.NONE;
-            case 1 -> WPFI_Apriori.PruningMode.WEIGHT_ONLY;
-            case 2 -> WPFI_Apriori.PruningMode.MUHAT_ONLY;
-            case 3 -> WPFI_Apriori.PruningMode.APPROX_ONLY;
-            case 5 -> WPFI_Apriori.PruningMode.FAST;
-            default -> WPFI_Apriori.PruningMode.ALL; // 4 hoặc khác
+    private static LinkedHashSet<String> collectUniqueItems(Path datasetPath, int maxTx) throws IOException {
+        LinkedHashSet<String> set = new LinkedHashSet<String>();
+        int count = 0;
+
+        BufferedReader br = null;
+        try {
+            br = Files.newBufferedReader(datasetPath, StandardCharsets.UTF_8);
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (count >= maxTx)
+                    break;
+                line = line.trim();
+                if (line.isEmpty())
+                    continue;
+
+                String[] tokens = line.split("[,\\s]+");
+                boolean hasAny = false;
+
+                for (String tok : tokens) {
+                    if (tok == null)
+                        continue;
+                    tok = tok.trim();
+                    if (tok.isEmpty())
+                        continue;
+
+                    if (tok.equals("-1") || tok.equals("-2"))
+                        continue;
+
+                    int colon = tok.lastIndexOf(':');
+                    String itemName = (colon > 0) ? tok.substring(0, colon).trim() : tok;
+
+                    if (!itemName.isEmpty()) {
+                        set.add(itemName);
+                        hasAny = true;
+                    }
+                }
+
+                if (hasAny)
+                    count++;
+            }
+        } finally {
+            if (br != null)
+                br.close();
+        }
+
+        return set;
+    }
+
+    private static void writeOutputFile(
+            String outputPathStr,
+            String datasetPath,
+            String inputPath,
+            UncertainDatabase db,
+            Set<Itemset> results,
+            boolean useExactTail) throws IOException {
+
+        Path out = resolvePathSmart(outputPathStr);
+
+        // sort by score desc
+        List<Itemset> sorted = new ArrayList<Itemset>(results);
+        Collections.sort(sorted, new Comparator<Itemset>() {
+            @Override
+            public int compare(Itemset a, Itemset b) {
+                double sa = scoreOf(a, db, useExactTail);
+                double sb = scoreOf(b, db, useExactTail);
+                return Double.compare(sb, sa);
+            }
+        });
+
+        BufferedWriter bw = null;
+        try {
+            bw = Files.newBufferedWriter(out, StandardCharsets.UTF_8);
+
+            bw.write("===== WPFI OUTPUT =====");
+            bw.newLine();
+            bw.write("dataset = " + resolvePathSmart(datasetPath).toAbsolutePath().normalize());
+            bw.newLine();
+            bw.write("input   = " + resolvePathSmart(inputPath).toAbsolutePath().normalize());
+            bw.newLine();
+            bw.write("MSUP=" + Constants.MSUP + "  T=" + Constants.T + "  useExactTail=" + useExactTail);
+            bw.newLine();
+            bw.write("transactions=" + db.getTransactions().size());
+            bw.newLine();
+            bw.write("----------------------------------------------");
+            bw.newLine();
+            bw.write("Itemset\tk\tmu\tpTail\tavgW\tscore");
+            bw.newLine();
+
+            for (Itemset X : sorted) {
+                double mu = WPFI_Metrics.computeMu(X, db.getTransactions());
+
+                double pTail;
+                if (useExactTail) {
+                    double[] probs = WPFI_Metrics.probsPerTransaction(X, db.getTransactions());
+                    pTail = WPFI_Metrics.dpTailAtLeast(Constants.MSUP, probs);
+                } else {
+                    pTail = WPFI_Metrics.poissonTailAtLeast(Constants.MSUP, mu);
+                }
+
+                double avgW = X.avgWeight();
+                double score = avgW * pTail;
+
+                bw.write(X.toString());
+                bw.write("\t");
+                bw.write(String.valueOf(X.size()));
+                bw.write("\t");
+                bw.write(String.format(Locale.US, "%.6f", mu));
+                bw.write("\t");
+                bw.write(String.format(Locale.US, "%.6f", pTail));
+                bw.write("\t");
+                bw.write(String.format(Locale.US, "%.6f", avgW));
+                bw.write("\t");
+                bw.write(String.format(Locale.US, "%.6f", score));
+                bw.newLine();
+            }
+
+            bw.write("----------------------------------------------");
+            bw.newLine();
+            bw.write("TOTAL_WPFI=" + results.size());
+            bw.newLine();
+
+        } finally {
+            if (bw != null)
+                bw.close();
+        }
+    }
+
+    private static double scoreOf(Itemset X, UncertainDatabase db, boolean useExactTail) {
+        double mu = WPFI_Metrics.computeMu(X, db.getTransactions());
+        double pTail;
+        if (useExactTail) {
+            double[] probs = WPFI_Metrics.probsPerTransaction(X, db.getTransactions());
+            pTail = WPFI_Metrics.dpTailAtLeast(Constants.MSUP, probs);
+        } else {
+            pTail = WPFI_Metrics.poissonTailAtLeast(Constants.MSUP, mu);
+        }
+        return X.avgWeight() * pTail;
+    }
+
+    // -------- utils --------
+
+    private static String joinBySpace(List<String> parts) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.size(); i++) {
+            if (i > 0)
+                sb.append(' ');
+            sb.append(parts.get(i));
+        }
+        return sb.toString();
+    }
+
+    private static Path resolvePathSmart(String pathStr) {
+        Path p = Paths.get(pathStr);
+        if (p.isAbsolute())
+            return p.normalize();
+        return Paths.get("").toAbsolutePath().resolve(p).normalize();
+    }
+
+    private static double sampleGaussianClipped(Random rnd, double mean, double var) {
+        double sd = Math.sqrt(Math.max(var, 0.0));
+        double v = mean + rnd.nextGaussian() * sd;
+        return clip01(v);
+    }
+
+    private static double clip01(double v) {
+        if (Double.isNaN(v) || Double.isInfinite(v))
+            return 1e-6;
+        if (v <= 0.0)
+            return 1e-6;
+        if (v > 1.0)
+            return 1.0;
+        return v;
+    }
+
+    private static String getArg(String[] args, int idx, String def) {
+        if (args == null)
+            return def;
+        if (idx < 0 || idx >= args.length)
+            return def;
+        String s = args[idx];
+        if (s == null)
+            return def;
+        s = s.trim();
+        return s.isEmpty() ? def : s;
+    }
+
+    private static int tryParseInt(String s, int def) {
+        if (s == null)
+            return def;
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (Exception e) {
+            return def;
+        }
+    }
+
+    private static long tryParseLong(String s, long def) {
+        if (s == null)
+            return def;
+        try {
+            return Long.parseLong(s.trim());
+        } catch (Exception e) {
+            return def;
+        }
+    }
+
+    private static double tryParseDouble(String s, double def) {
+        if (s == null)
+            return def;
+        try {
+            return Double.parseDouble(s.trim());
+        } catch (Exception e) {
+            return def;
+        }
+    }
+
+    private static Double tryParseDoubleObj(String s, Double def) {
+        if (s == null)
+            return def;
+        try {
+            return Double.parseDouble(s.trim());
+        } catch (Exception e) {
+            return def;
+        }
+    }
+
+    private static void runPruningBenchmark(
+            String datasetPath,
+            String inputPath,
+            String outputPath,
+            int maxTx,
+            long seed,
+            double meanProb,
+            double varProb,
+            boolean useExactTail) throws IOException {
+
+        // 1) generate input.txt 1 lần (dùng chung)
+        System.out.println("=== BENCH: generating input once ===");
+        generateInputFile(datasetPath, inputPath, maxTx, seed, meanProb, varProb);
+
+        // 2) load DB 1 lần (dùng chung)
+        UncertainDatabase db = new UncertainDatabase();
+        db.loadFromInputFile(inputPath);
+
+        // 3) Chạy các mode cần so sánh
+        Constants.PruneMode[] modes = new Constants.PruneMode[] {
+                Constants.PruneMode.WEIGHT_ONLY,
+                Constants.PruneMode.MUHAT_ONLY,
+                Constants.PruneMode.APPROXMU_ONLY,
+                Constants.PruneMode.UBSCORE_ONLY,
+                Constants.PruneMode.ALL
         };
+
+        List<BenchRow> rows = new ArrayList<>();
+
+        for (Constants.PruneMode mode : modes) {
+            Constants.PRUNE_MODE = mode;
+
+            System.out.println();
+            System.out.println("=== RUN MODE: " + mode + " | " + Constants.describe() + " ===");
+
+            WPFI_Apriori miner = new WPFI_Apriori(db);
+            Set<Itemset> results = miner.mine();
+
+            Stats st = miner.getStats();
+
+            // output file theo mode
+            String outMode = appendModeToFileName(outputPath, mode.name().toLowerCase(Locale.ROOT));
+            writeOutputFile(outMode, datasetPath, inputPath, db, results, useExactTail);
+
+            rows.add(new BenchRow(mode, st, results.size(), outMode));
+        }
+
+        // 4) in bảng và ghi file comparison
+        printComparison(rows);
+        writeComparisonFile("pruning_comparison.txt", datasetPath, inputPath, rows);
     }
 
-    private static void applyParams(String[] args, int offset) {
-        // [MSUP] [T] [ALPHA] [MIN_AVG_WEIGHT]
-        // offset là vị trí bắt đầu của MSUP
-        Constants.MSUP = (args.length >= offset + 1) ? Integer.parseInt(args[offset]) : Constants.MSUP;
-        Constants.T = (args.length >= offset + 2) ? Double.parseDouble(args[offset + 1]) : Constants.T;
-        Constants.ALPHA = (args.length >= offset + 3) ? Double.parseDouble(args[offset + 2]) : Constants.ALPHA;
-        Constants.MIN_AVG_WEIGHT = (args.length >= offset + 4) ? Double.parseDouble(args[offset + 3]) : Constants.MIN_AVG_WEIGHT;
-        // Constants.MAX_K giữ nguyên theo file Constants.java (bạn set 0 để không giới hạn)
+    private static class BenchRow {
+        Constants.PruneMode mode;
+        long runtimeMs;
+        long peakMemMB;
+        long expansions;
+        long candidatesKept;
+        int patterns;
+        Map<Integer, Integer> patternsByK;
+        String outputFile;
+
+        BenchRow(Constants.PruneMode mode, Stats st, int patterns, String outputFile) {
+            this.mode = mode;
+            this.runtimeMs = st.runtimeMs;
+            this.peakMemMB = st.peakMemMB;
+            this.expansions = st.expansions;
+            this.candidatesKept = st.candidatesKept;
+            this.patterns = patterns;
+            this.patternsByK = new LinkedHashMap<>(st.patternsByK);
+            this.outputFile = outputFile;
+        }
     }
 
-    private static void ensureParentFolder(String path) {
-        File outFile = new File(path);
-        File parent = outFile.getParentFile();
-        if (parent != null && !parent.exists()) parent.mkdirs();
+    private static void printComparison(List<BenchRow> rows) {
+        System.out.println();
+        System.out.println("========== PRUNING COMPARISON ==========");
+        System.out.printf("%-14s | %10s | %10s | %12s | %14s | %10s | %s%n",
+                "MODE", "Runtime(ms)", "PeakMemMB", "Expansions", "CandidatesKept", "Patterns", "PatternsByK");
+        System.out.println(
+                "----------------------------------------------------------------------------------------------");
+
+        for (BenchRow r : rows) {
+            System.out.printf("%-14s | %10d | %10d | %12d | %14d | %10d | %s%n",
+                    r.mode.name(),
+                    r.runtimeMs,
+                    r.peakMemMB,
+                    r.expansions,
+                    r.candidatesKept,
+                    r.patterns,
+                    r.patternsByK.toString());
+            System.out.println("  -> output: " + r.outputFile);
+        }
+
+        System.out.println("========================================");
     }
 
-    private static void ensureDir(String dir) {
-        File f = new File(dir);
-        if (!f.exists()) f.mkdirs();
+    private static void writeComparisonFile(
+            String fileName,
+            String datasetPath,
+            String inputPath,
+            List<BenchRow> rows) throws IOException {
+        Path out = resolvePathSmart(fileName);
+
+        try (BufferedWriter bw = Files.newBufferedWriter(out, StandardCharsets.UTF_8)) {
+            bw.write("===== PRUNING COMPARISON =====");
+            bw.newLine();
+            bw.write("dataset=" + resolvePathSmart(datasetPath).toAbsolutePath().normalize());
+            bw.newLine();
+            bw.write("input=" + resolvePathSmart(inputPath).toAbsolutePath().normalize());
+            bw.newLine();
+            bw.write("config=" + Constants.describe());
+            bw.newLine();
+            bw.write("------------------------------------------------------------");
+            bw.newLine();
+
+            bw.write("MODE\tRuntimeMs\tPeakMemMB\tExpansions\tCandidatesKept\tPatterns\tPatternsByK\tOutputFile");
+            bw.newLine();
+
+            for (BenchRow r : rows) {
+                bw.write(r.mode.name());
+                bw.write("\t");
+                bw.write(String.valueOf(r.runtimeMs));
+                bw.write("\t");
+                bw.write(String.valueOf(r.peakMemMB));
+                bw.write("\t");
+                bw.write(String.valueOf(r.expansions));
+                bw.write("\t");
+                bw.write(String.valueOf(r.candidatesKept));
+                bw.write("\t");
+                bw.write(String.valueOf(r.patterns));
+                bw.write("\t");
+                bw.write(r.patternsByK.toString());
+                bw.write("\t");
+                bw.write(r.outputFile);
+                bw.newLine();
+            }
+        }
+
+        System.out.println("Wrote comparison: " + out.toAbsolutePath().normalize());
     }
+
+    private static String appendModeToFileName(String outputPath, String mode) {
+        // output.txt -> output_weight_only.txt
+        int dot = outputPath.lastIndexOf('.');
+        if (dot <= 0)
+            return outputPath + "_" + mode + ".txt";
+        return outputPath.substring(0, dot) + "_" + mode + outputPath.substring(dot);
+    }
+
 }
